@@ -1,0 +1,3 @@
+name: 百炼成金模式
+description: 阿里云百炼平台的前缀缓存感知预设：工具目录固定、历史只追加、压缩尽量不触发。适用于该路线上的全部模型（Qwen / DeepSeek / Kimi / GLM 等）。
+order: 10

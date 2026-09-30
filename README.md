@@ -50,12 +50,30 @@ dsh 的 `standard` preset 是为官方 DeepSeek API 设计的，那个端点有
 ## 目录
 
 ```
-presets/bailian-gold.patch.yml            preset 定义，主产物
+presets/bailian-gold.patch.yml            preset 定义，主产物（0.1.7+ / 0.2.x）
+compat/0.1.5/                             dsh 0.1.5-rc.x 的兼容版（旧 preset 机制）
 examples/aliyun-route.patch.yml           阿里云 route（OpenAI 兼容壳）
 examples/aliyun-anthropic-route.patch.yml 阿里云 route（Anthropic 端点，更接近原生）
 docs/spike-01-*.md                        前缀可否锁住的源码级验证
+docs/compare-whale-elite.md               与鲸英模式的逐项对比
 .ref/                                     上游参考源码（gitignore，只读）
 ```
+
+## 版本兼容
+
+覆盖 dsh 的多个正式发行版（rc 线，alpha 不算）。分界点在 **0.1.7-rc.1**：
+
+| dsh 版本 | preset 机制 | 用哪个 |
+|---|---|---|
+| **0.1.7-rc.1 及以后**（含 0.2.0-rc.x）| `@deepseek-ai/dsh-agent-preset` 插件行，经 profile patch 装入 | `presets/bailian-gold.patch.yml` |
+| **0.1.5-rc.1 ~ rc.3** | `@deepseek-ai/dsh-agent-presets`（**复数**）扫描 `<dshHome>/.agent-presets/` | `compat/0.1.5/` |
+
+从 0.1.7-rc.1 起，上游把 preset 拆成 `agent-preset-registry` + `agent-preset` 两个包，
+preset 也从「一个独立文件」变成「一行插件声明」。
+
+0.1.5 的安装方式不同（旧机制不走 plugin 命令，是把目录复制到
+`~/.dsh/.agent-presets/<id>/`），差异清单与操作步骤见
+[`compat/README.md`](compat/README.md)。
 
 ## 接入
 
