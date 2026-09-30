@@ -1,0 +1,17 @@
+# 参考源码（dsh 上游，仅供阅读，不参与构建）
+.ref/
+
+node_modules/
+dist/
+*.tsbuildinfo
+
+# 本地环境与密钥
+.env
+.env.*
+!.env.example
+
+.DS_Store
+Thumbs.db
+
+# 项目工作记忆（含个人笔记与端点信息，不发布）
+.workbuddy/

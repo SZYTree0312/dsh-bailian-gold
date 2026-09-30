@@ -1,0 +1,31 @@
+{
+  "name": "dsh-qwen-harness",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Qwen Harness（阿里云百炼版）：为 Qwen3.8-Flash 量身定做的前缀缓存感知 Agent 预设",
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "agent-preset",
+    "qwen",
+    "prefix-cache"
+  ],
+  "license": "MIT",
+  "files": [
+    "presets",
+    "examples",
+    "docs",
+    "README.md",
+    "LICENSE"
+  ],
+  "meta": {
+    "title": "Qwen Harness",
+    "description": "为 Qwen3.8-Flash 定做的前缀缓存感知预设：工具目录全程固定、历史只追加、压缩尽量不触发。一等指标是 prefix cache hit rate，不是 token 数。"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./presets/qwen.patch.yml"
+    }
+  }
+}

@@ -1,0 +1,38 @@
+# 阿里云百炼（DashScope）route 配置 —— 配套 presets/qwen.patch.yml
+#
+# 这段属于 Host 级配置（profile 的 cordis.patch.yml），不是 preset 的一部分。
+# 二者分工：preset 定义 agent 行为（工具面 / 提示词 / 压缩策略），
+# 这里定义模型容量。压缩的实际触发点由两者共同决定。
+#
+# 为什么 contextWindow 是这里最要紧的一个数：
+#   compaction-basic 的触发点是
+#       min(contextWindow × thresholdRatio, messageBudget − headroomTokens)
+#   其中 messageBudget = contextWindow − 每请求输出预留。
+#   窗口小于约 300K 时，真正生效的是右边那一项 —— thresholdRatio 会被架空虚设。
+#   例：contextWindow 262144、输出预留 32768、headroom 65536
+#       → 触发点 163840，而不是 262144 × 0.92 = 241172。
+#
+#   Qwen3.8-Flash 原生 262144，YaRN 可扩 1M，官方标准模式最大输入 991808。
+#   把它开到 991808，触发点升到约 893504 —— 常规会话根本压不到，
+#   前缀缓存也就不会因为一次 replace 而整体失效。这是本 harness 的核心收益所在。
+
+- id: llm-pi-ai
+  name: "@deepseek-ai/dsh-llm-pi-ai"
+  config:
+    providers:
+      aliyun:
+        displayName: 阿里云百炼
+        apiKeyEnv: ALIYUN_API_KEY
+        api: openai-completions
+        # 通用端口。若走阿里云专属 MaaS 实例，替换成
+        # https://llm-<实例 id>.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
+        baseURL: https://dashscope.aliyuncs.com/compatible-mode/v1
+        models:
+          - id: qwen3.8-flash
+            name: qwen3.8-flash
+            # 官方标准模式最大输入 991808（思考模式 983616）。
+            # 这是「尽量不压缩」策略的前提。
+            contextWindow: 991808
+            # 不设 maxTokens：留空则用 route 回退值 32768。
+            # 注意设了它会同时成为每请求的输出默认值，反而把 messageBudget 压低、
+            # 让压缩更早触发 —— 与本 preset 的目标相反。

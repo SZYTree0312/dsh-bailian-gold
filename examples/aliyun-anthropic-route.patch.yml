@@ -1,0 +1,67 @@
+# 阿里云百炼 · Anthropic 兼容端点方案
+#
+# 现状（examples/aliyun-route.patch.yml）走的是百炼的 OpenAI 兼容壳：
+#   api: openai-completions
+#   baseURL: .../compatible-mode/v1
+# 那是一层协议翻译器——非标的 enable_thinking 要被拦成 HTTP header 才能透传，
+# 思考内容以 reasoning_content 字段回流，工具调用走 OpenAI function call，
+# 而且没有 prompt 缓存的显式标记位。
+#
+# 百炼另有一个 Anthropic 兼容端点，路径只差一段：
+#   POST https://{WorkspaceId}.{region}.maas.aliyuncs.com/apps/anthropic/v1/messages
+# 走它能换回：
+#   - 原生 thinking / tool_use / tool_result 内容块（而非字段拼装）
+#   - cache_control: {type: ephemeral} 显式缓存断点，命中后按缓存费率计费
+#     （最小可缓存长度 1024 tokens；usage 回传 cache_creation_input_tokens /
+#      cache_read_input_tokens，两个字段在 message_delta 事件里给全）
+#   - stop_reason: tool_use 等规范语义
+#
+# 注意：连官方 DeepSeek adapter（packages/llm/llm-deepseek）都没有发 cache_control，
+# 全库 grep 为空。它靠的是隐式前缀缓存 + in-history 保前缀。这里反过来——
+# 显式断点由我们主动标，但 in-history 拿不到（见下）。
+
+- id: llm-pi-ai
+  name: "@deepseek-ai/dsh-llm-pi-ai"
+  config:
+    providers:
+      aliyun:
+        displayName: 阿里云百炼
+        apiKeyEnv: ALIYUN_API_KEY
+        # anthropic-messages 是 pi-ai 支持的三种协议之一
+        api: anthropic-messages
+        # 必须以 /apps/anthropic 结尾，不要带 /v1 ——客户端会自己拼 /v1/messages。
+        # {WorkspaceId} 换成控制台 Workspace Details 里的 id；
+        # 专属实例形态可直接用 llm-<实例 id>.cn-beijing.maas.aliyuncs.com/apps/anthropic
+        baseURL: https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/apps/anthropic
+        compat:
+          # 唯一合法取值就是 anthropic；pi-ai 的取值表被 drift gate 锁死，写别的会编译期失败
+          cacheControlFormat: anthropic
+        # 手写 models：该端点不提供 /v1/models，自动发现会 404。
+        # 模型 id 必须用百炼的写法（deepseek-v4-flash / deepseek-v4.1-flash / qwen3.8-flash …）
+        models:
+          - id: qwen3.8-flash
+            name: qwen3.8-flash
+            contextWindow: 991808
+          - id: deepseek-v4.1-flash
+            name: deepseek-v4.1-flash
+
+# ⚠️ 这个端点上拿不到的：systemPromptUpdate: in-history
+#
+# 官方 DeepSeek 的原生体验里，最要紧的一条是 deepseek-flash 默认声明的
+# systemPromptUpdate: in-history ——「端点读取 messages 任意位置的最新 system 消息
+# 作为完整系统提示」，于是 agent loop 可以把变更的系统提示追加在缓存历史之后，
+# 而不是重写开头。这是保前缀缓存的关键。
+#
+# 百炼的 Anthropic 文档明确写着：
+#   「system 是顶层参数 —— messages 数组不接受 system 角色。」
+# 也就是说对话中间的 system 消息这条路在端点上就不通，声明 in-history 只会让
+# 系统提示彻底失效。**千万不要**照搬 llm-deepseek 的 catalog 或其默认声明。
+#
+# pi-ai 侧也堵着：它内部有 supportsMidConvoSystemMessages /
+# supportsMidConvoToolAdditions 两个能力位，但在 compat 表里都是 'withhold'
+# ——不由用户配置，只能由 pi-ai 内置 catalog 的 provider 声明。
+# 百炼是手申报路由，拿不到。
+#
+# 替代方案：把前缀稳定性交给 harness 侧。presets/qwen.patch.yml 的三条设计
+# （工具目录固定 / 历史只追加 / 动态状态推尾部）本就是在保证系统提示不变，
+# 不需要端点配合。换句话说，这条原生机制我们是用设计绕过去的，不是补出来的。
