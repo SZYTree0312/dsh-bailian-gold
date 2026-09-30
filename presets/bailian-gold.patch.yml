@@ -3,13 +3,18 @@
 # `standard` preset (packages/bundle/web-app/presets/standard.patch.yml @ 0.2.0-rc.2).
 #
 # Governing rule — the model-facing prefix stays byte-stable for the whole
-# session. Model Studio prices a cache hit at 0.1 vs 0.8 CNY per million input
-# tokens (8x), so anything that rewrites the prefix is paid for twice. Concretely:
+# session. Model Studio discounts a cache hit hard: implicit hits bill at 20%
+# of the input price, explicit hits at 10%, so anything that rewrites the
+# prefix is paid for again at the full 100%. Measured on this instance:
+# an unchanged 10391-token prefix re-sent three times cached 10240 tokens
+# (implicit) / 10377 (explicit). See docs/verify-prefix-cache.md.
 #
 # Scope: every model served through this route — Qwen, DeepSeek, Kimi, GLM,
 # MiniMax alike. The differentiation below concerns the endpoint's implicit
 # prefix cache, not any vendor, so one preset covers them all. Per-model tuning
 # belongs in `modelPolicies`, not in a second preset (and not in a git branch).
+#
+# Four rules follow from that:
 #
 #   1. The tool catalog is never narrowed, extended, or reordered mid-session.
 #      Upstream already holds this line for plan mode ("The tool catalog stays
@@ -139,10 +144,18 @@
               - id: tool-result-pruner
                 name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
                 config:
-                  # 工具结果是每轮新增内容的主力，也是唯一按全价（0.8 元/百万）计费的
-                  # 大块 —— 系统提示与历史都吃缓存价（0.1），只有新内容不命中。
-                  # 裁掉它直接省钱，还顺带减缓上下文增长、推迟压缩触发（压缩会破坏前缀缓存）。
-                  # 保留首尾足以定位问题；想更激进可降到 4096/2048/512（与鲸英模式一致）。
+                  # 【这个插件不在每轮跑。】上游 README 明写：它由 compaction-basic
+                  # 在「压力或溢出确认之后」调用，压力不到就完全不裁 —— 更不会
+                  # 「推迟压缩触发」（裁剪本身发生在触发之后）。
+                  # 所以它的定位是**压缩期的减压阀**，不是每轮省 token 的开关：
+                  # 裁剪不发模型调用，裁得够多就能免掉一次会压缩调用（后者要按全价
+                  # 重读整段历史再生成摘要，是本 preset 里最贵的一笔）。
+                  # 代价：它替换的是**更早**的工具结果，会让那一点之后的前缀缓存失效。
+                  # 但走到这一步说明已经要压缩了，缓存本来就要失效，所以是净赚。
+                  #
+                  # 取值 = 上游 standard 默认值（8192/4096/1024），不是本 preset 的收紧。
+                  # 想更激进可降到 4096/2048/512（与鲸英模式一致），换取更高的免压缩概率，
+                  # 代价是被丢掉的中段可能让 agent 重新读一遍文件 —— 那是全价 token。
                   thresholdChars: 8192
                   headChars: 4096
                   tailChars: 1024

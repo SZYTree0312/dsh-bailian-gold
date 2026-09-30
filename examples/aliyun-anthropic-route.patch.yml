@@ -16,6 +16,27 @@
 #      cache_read_input_tokens，两个字段在 message_delta 事件里给全）
 #   - stop_reason: tool_use 等规范语义
 #
+# ⭐ 但这条路的第一价值是省钱，不是「更接近原生」：
+#
+#   官方计费：隐式缓存命中 = 输入价 × 20%，创建 = 100%
+#             显式缓存命中 = 输入价 × 10%，创建 = 125%
+#
+#   设一段 T token 的稳定前缀连续重复 N 轮：
+#     隐式 = 1.00 + 0.20 × (N−1)
+#     显式 = 1.25 + 0.10 × (N−1)     → 转折点 N ≥ 4
+#
+#   N=10 省 23%，N=50 省 43%，渐近上限 50%。
+#   而百炼成金 preset 的全部设计就是「让同一段前缀每轮原样重发」——
+#   正好落在显式缓存的最优区。编码会话动辄几十上百轮，第 4 轮轻松越过。
+#
+#   实测（2026-09-30，同一实例）：同一段 10391 token 前缀连发三次，
+#   显式路径第 2、3 次 cache_read = 10377（覆盖 99.9%），
+#   隐式路径 cached_tokens = 10240（覆盖 98.5%）。两边都通，显式更便宜也更干净。
+#
+#   代价：显式缓存有效期固定 5 分钟（命中后重置），隐式由系统不定期清理。
+#   交互密集选显式；会话中间搁置很久的话，显式要按 125% 重建一次。
+#   完整推算见 docs/verify-prefix-cache.md。
+#
 # 注意：连官方 DeepSeek adapter（packages/llm/llm-deepseek）都没有发 cache_control，
 # 全库 grep 为空。它靠的是隐式前缀缓存 + in-history 保前缀。这里反过来——
 # 显式断点由我们主动标，但 in-history 拿不到（见下）。
@@ -41,7 +62,25 @@
         models:
           - id: qwen3.8-flash
             name: qwen3.8-flash
+            # ⚠️ 这一行不能省。省掉就回落 defaultContextWindow 262144，
+            # 压缩触发点从 ~893504 掉到 163840 —— 常规会话够得着，
+            # preset 的保前缀设计随之失效。
             contextWindow: 991808
+            # qwen3.8-flash 在百炼上**默认开思考**，而 pi-ai 对未声明
+            # reasoningEfforts 的模型判定为「不思考」、不发控制参数 ——
+            # 结果是思考照跑照计费，却不在 harness 视野里（实测占输出 token 69%）。
+            # 想把它变成可控项，声明推理等级：
+            #
+            # reasoningEfforts:      # 键 = 选择器等级，值 = 协议里发送的拼写
+            #   off:                 # 只有 off 允许留空
+            #   high: high
+            # compat:
+            #   thinkingFormat: qwen # 取值须在 pi-ai 的 THINKING_FORMAT_GATE 内
+            #
+            # ⚠️ 上面这段**未验证**：thinkingFormat → wire 参数的映射在 pi-ai 库内部，
+            # 本仓库没有实机跑过。写错可能让每次请求都失败，先拿小请求试。
+            # 另外关掉思考省的是输出 token，但 agent 少了推理容易多绕几轮
+            # （每轮都付新内容全价）—— 是取舍，不是纯赚。
           - id: deepseek-v4.1-flash
             name: deepseek-v4.1-flash
 

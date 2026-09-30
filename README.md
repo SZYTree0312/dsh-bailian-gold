@@ -29,7 +29,7 @@ dsh 的 `standard` preset 是为官方 DeepSeek API 设计的，那个端点有
 
 ## 一句话原理
 
-百炼把缓存命中的输入定价 0.1 元/百万，未命中 0.8 元/百万——**8 倍差价**。
+百炼对缓存命中的输入按输入单价的折扣计费 —— **隐式命中 20%，显式命中 10%**。
 所以这个 preset 的一等指标不是 token 数，是 **prefix cache hit rate**。
 
 由此推出三条与其他 harness 相反的做法：
@@ -39,6 +39,70 @@ dsh 的 `standard` preset 是为官方 DeepSeek API 设计的，那个端点有
    这里把它从 plan mode 推广到整个会话。
 2. **历史只追加**，压缩只做定点区间替换，系统提示永不进压缩区。
 3. **动态状态一律推到尾部**，绝不注入系统提示。
+
+### 已实测（2026-09-30）
+
+在同一实例上发三次同一段 10391 token 的前缀：
+
+| | 第 1 次 | 第 2 次 | 第 3 次 |
+|---|---|---|---|
+| OpenAI 壳（隐式）| cached 0 | **cached 10240** | **cached 10240** |
+| Anthropic 端点（显式）| create 10377 | **read 10377** | **read 10377** |
+
+**两种缓存都通，隐式覆盖 98.5%、显式覆盖 99.9%。** 完整数据、计费对照与推算见
+[`docs/verify-prefix-cache.md`](docs/verify-prefix-cache.md)。
+
+## 成本核算：三条杠杆，按大小排
+
+| token 类别 | 单价 | 谁在管 |
+|---|---|---|
+| 命中缓存的输入 | 输入价 × 20%（隐式）/ 10%（显式）| 本 preset 的全部设计 |
+| 未命中的输入（每轮新增）| 输入价 × 100% | 压缩期减压阀 + 提示词纪律 |
+| 输出（含思考）| 输出价，**不参与缓存** | 提示词纪律（部分）|
+
+**输入是绝对大头。** 一段稳定前缀每轮原样重发，会话越长，缓存折扣的杠杆越大。
+
+### 杠杆一：把隐式缓存换成显式缓存
+
+设一段 T token 的稳定前缀连续重复 N 轮：
+
+```
+隐式 = 1.00 + 0.20 × (N−1)
+显式 = 1.25 + 0.10 × (N−1)      ← 创建贵 25%，命中便宜一半
+转折点：N ≥ 4
+```
+
+| 轮数 | 隐式 | 显式 | 显式省 |
+|---|---|---|---|
+| 3 | 1.40 | 1.45 | −3.6% |
+| 10 | 2.80 | 2.15 | 23.2% |
+| 50 | 10.80 | 6.15 | **43.1%** |
+| 100 | 20.80 | 11.15 | **46.4%** |
+
+渐近上限 **50%**。本 preset 的设计恰好落在显式缓存的最优区 —— 它的全部功力都花在
+「让前缀字节稳定、每轮原样重发」上，而稳定前缀重复轮数越多，显式越划算。
+
+→ 走 [`examples/aliyun-anthropic-route.patch.yml`](examples/aliyun-anthropic-route.patch.yml)。
+这条路线以前只作为「更接近原生」的备选写着，**它的第一价值其实是省钱**。
+
+> 代价：显式缓存有效期固定 5 分钟（命中后重置）；隐式由系统不定期清理、没有明确上限。
+> 交互密集的会话选显式；搁置型会话两者差别不大。
+
+### 杠杆二：别让压缩触发
+
+压缩是唯一会主动把前缀打断的操作，而它的触发点由 route 的 `contextWindow` 决定 ——
+**这一项没填对，上面所有设计都白搭**，见下文。
+
+### 杠杆三：思考是笔隐形输出开销
+
+`qwen3.8-flash` 在百炼上**默认开思考**，而 `llm-pi-ai` 对未声明 `reasoningEfforts`
+的模型判定为「不思考」（源码注释原话：*a hand-declared model has none and does not
+reason*），于是**既不发控制参数，也不在 harness 视野里**。实测一次普通提问，
+80 个输出 token 里 55 个是思考（69%）。官方明确「思维链内容全部计入输出 Token 统计」。
+
+输出价是缓存命中价的几十倍，这是一条每轮都在跑的开销。**怎么控制见
+[`docs/verify-prefix-cache.md`](docs/verify-prefix-cache.md) 第 4 节**（配置写法**未验证**，
+且关掉思考是否划算取决于它换来的轮数 —— 是取舍，不是纯赚）。
 
 ## 与梁神模式的关系
 
@@ -55,6 +119,7 @@ compat/0.1.5/                             dsh 0.1.5-rc.x 的兼容版（旧 pres
 examples/aliyun-route.patch.yml           阿里云 route（OpenAI 兼容壳）
 examples/aliyun-anthropic-route.patch.yml 阿里云 route（Anthropic 端点，更接近原生）
 docs/spike-01-*.md                        前缀可否锁住的源码级验证
+docs/verify-prefix-cache.md               实测：缓存命中、显式 vs 隐式计费、思考开销
 docs/compare-whale-elite.md               与鲸英模式的逐项对比
 .ref/                                     上游参考源码（gitignore，只读）
 ```
@@ -112,6 +177,11 @@ pressureBudget = 229376 − 65536 = 163840
 官方标准模式的最大输入 **991808**，触发点升到约 **893504**，常规会话根本压不到——
 前缀缓存也就不会因为一次 `replace` 而整体失效。
 
+> ⚠️ **不填 `contextWindow` 就等于放弃这个 preset 的主要收益。** 它回落到
+> `defaultContextWindow` 262144，触发点只有 **163840** —— 一段正常的编码会话够得着，
+> 压缩（连带前缀缓存失效）会真的发生。`examples/` 里已经写好，**照抄到 profile 的
+> `cordis.patch.yml` 才算数**。
+
 **不要设 model 的 `maxTokens`**：它会同时成为每请求输出默认值，压低 `messageBudget`，
 让压缩更早触发，与本预设目标相反。
 
@@ -156,9 +226,10 @@ dsh plugin --profile web add github:SZYTree0312/dsh-bailian-gold
 dsh plugin --profile web remove dsh-bailian-gold
 ```
 
-> **尚未实机验证。** 本 preset 的结论全部来自对上游 `0.2.0-rc.2` 源码的静态分析
-> 与端点探测，还没有跑过一次真实会话。前缀能否锁住、压缩触发点是否如预期，
-> 都待实测确认后再依赖。
+> **部分实机验证。** 前缀缓存是否可命中已用真实请求测通（见
+> [`docs/verify-prefix-cache.md`](docs/verify-prefix-cache.md)）；其余结论来自对上游
+> `0.2.0-rc.2` 源码的静态分析。**本 preset 本身还没有跑过一次完整真实会话** ——
+> 工具目录是否真的全程不变、压缩触发点是否如预期、真实会话的命中率，都待实测。
 
 ## 状态
 
@@ -166,8 +237,13 @@ dsh plugin --profile web remove dsh-bailian-gold
 - [x] preset 第一版：纯配置，基于 upstream `standard` 改造
 - [x] provider 校准为 `aliyun`，route 配套配置见 `examples/`
 - [x] 定位修正：从「Qwen 专用」改为「百炼全平台」——差异化在缓存，不在厂商
-- [x] 对比鲸英模式并采纳三项（`includeRuntimeContext: false`、工具结果裁剪收紧、prompt 纪律），
-      见 `docs/compare-whale-elite.md`
-- [ ] 实机验证：装进 profile 跑一次，确认 preset 加载与压缩触发点
+- [x] 对比鲸英模式并采纳 `includeRuntimeContext: false` 与 prompt 纪律；
+      工具结果裁剪一项经 2026-09-30 复核**降级为「压缩期减压阀」**，
+      且其取值等于上游默认（见 `docs/compare-whale-elite.md`）
+- [x] **实测：前缀缓存可命中**（隐式 98.5% / 显式 99.9%），
+      并算出隐式→显式的成本转折点在第 4 轮（见 `docs/verify-prefix-cache.md`）
+- [ ] 把 `examples/` 的 route（尤其 `contextWindow`）真正落到 profile —— **不填等于放弃主要收益**
+- [ ] 实机验证：装进 profile 跑一次完整会话，确认 preset 加载与压缩触发点
+- [ ] 思考开销的控制（`reasoningEfforts` + `compat.thinkingFormat`）—— 写法未验证
 - [ ] `bootstrapMaxTokens` 落点（已定位到 `llm-pi-ai`，具体参数待确认）
 - [ ] 缓存命中率可观测：把 `cached_tokens` 暴露到 telemetry
