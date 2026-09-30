@@ -38,8 +38,26 @@
           - id: persona
             name: '@deepseek-ai/dsh-persona'
             config:
-              suffix: Your working directory is {{cwd}}.
-              prefix: You are a coding agent powered by the {{model}} model.
+              # 关闭动态 runtime-context 注入。它是「ordered dynamic runtime context」，
+              # 落进系统提示；而百炼没有 systemPromptUpdate: in-history 兜底，
+              # 系统提示一旦变化就会重写开头那条消息，整段前缀缓存随之失效。
+              # 代价：该开关是全有或全无，会一并抑制 sandbox / approval / delegation
+              # 的策略提示（没有按提供方过滤的选项）。缓存安全优先 —— 8 倍价差
+              # 远大于少几条策略提示的损失，且沙箱本身仍由 harness 强制执行。
+              includeRuntimeContext: false
+              prefix: |-
+                你在「百炼成金模式」下工作。这个组合的首要目标是让请求前缀保持字节稳定，
+                把缓存命中率拉到最高（百炼缓存命中 0.1 元/百万，未命中 0.8 元/百万，差 8 倍）。
+                纪律：
+                - 先查后写。用搜索精确定位，再用 read 的 offset/limit 只读需要的片段；不要整文件通读，不要重复读同一文件。
+                - 同一回合内并行发起互不依赖的工具调用，不要串行等待。
+                - 只做被要求的事：不写过程旁白，不复述已知信息，不自作主张扩大范围，不生成未被要求的文件。
+                - 一条命令能验证的不要用三条；优先复用已有函数与既有模式。
+                - 会产生长输出的命令改为重定向到文件或后台作业，只读回需要的行。
+                - 最终答复只给结论、改动位置与验证结果，不粘贴大段代码。
+                事实靠检查获得，不要问用户；只有用户才能决定的选择才用 ask_user_question。
+              suffix: |-
+                你是由 {{model}} 驱动的编码 agent。工作目录：{{cwd}}。
           - id: agent-instructions
             name: '@deepseek-ai/dsh-agent-instructions'
             config:
@@ -121,9 +139,13 @@
               - id: tool-result-pruner
                 name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
                 config:
-                  thresholdChars: 32768
-                  headChars: 16384
-                  tailChars: 8192
+                  # 工具结果是每轮新增内容的主力，也是唯一按全价（0.8 元/百万）计费的
+                  # 大块 —— 系统提示与历史都吃缓存价（0.1），只有新内容不命中。
+                  # 裁掉它直接省钱，还顺带减缓上下文增长、推迟压缩触发（压缩会破坏前缀缓存）。
+                  # 保留首尾足以定位问题；想更激进可降到 4096/2048/512（与鲸英模式一致）。
+                  thresholdChars: 8192
+                  headChars: 4096
+                  tailChars: 1024
           - id: delegation
             name: cordis:group
             group: true

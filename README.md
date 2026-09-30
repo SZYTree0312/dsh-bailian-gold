@@ -148,6 +148,8 @@ dsh plugin --profile web remove dsh-bailian-gold
 - [x] preset 第一版：纯配置，基于 upstream `standard` 改造
 - [x] provider 校准为 `aliyun`，route 配套配置见 `examples/`
 - [x] 定位修正：从「Qwen 专用」改为「百炼全平台」——差异化在缓存，不在厂商
+- [x] 对比鲸英模式并采纳三项（`includeRuntimeContext: false`、工具结果裁剪收紧、prompt 纪律），
+      见 `docs/compare-whale-elite.md`
 - [ ] 实机验证：装进 profile 跑一次，确认 preset 加载与压缩触发点
 - [ ] `bootstrapMaxTokens` 落点（已定位到 `llm-pi-ai`，具体参数待确认）
 - [ ] 缓存命中率可观测：把 `cached_tokens` 暴露到 telemetry
