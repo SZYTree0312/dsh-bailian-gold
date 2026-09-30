@@ -1,11 +1,15 @@
-# Agent preset `qwen`: one `@deepseek-ai/dsh-agent-preset` declaration inserted
-# after the web patch. Derived from the upstream `standard` preset
-# (packages/bundle/web-app/presets/standard.patch.yml @ 0.2.0-rc.2).
+# Agent preset `bailian-gold`: one `@deepseek-ai/dsh-agent-preset`
+# declaration inserted after the web patch. Derived from the upstream
+# `standard` preset (packages/bundle/web-app/presets/standard.patch.yml @ 0.2.0-rc.2).
 #
 # Governing rule — the model-facing prefix stays byte-stable for the whole
-# session. Qwen3.8-Flash prices a cache hit at 0.1 vs 0.8 CNY per million input
-# tokens (8x) and reports up to 8x speedup on cache-heavy long contexts, so
-# anything that rewrites the prefix is paid for twice. Concretely:
+# session. Model Studio prices a cache hit at 0.1 vs 0.8 CNY per million input
+# tokens (8x), so anything that rewrites the prefix is paid for twice. Concretely:
+#
+# Scope: every model served through this route — Qwen, DeepSeek, Kimi, GLM,
+# MiniMax alike. The differentiation below concerns the endpoint's implicit
+# prefix cache, not any vendor, so one preset covers them all. Per-model tuning
+# belongs in `modelPolicies`, not in a second preset (and not in a git branch).
 #
 #   1. The tool catalog is never narrowed, extended, or reordered mid-session.
 #      Upstream already holds this line for plan mode ("The tool catalog stays
@@ -20,14 +24,15 @@
 #      from its start onward, so pressure thresholds are pushed high and the
 #      summarizer is the cheap routed model itself.
 - insert:
-    - id: preset-qwen
+    - id: preset-bailian-gold
       name: '@deepseek-ai/dsh-agent-preset'
       config:
-        id: qwen
-        name: Qwen
+        id: bailian-gold
+        name: 百炼成金模式
         description: >-
-          Qwen3.8-Flash / Qwen4-architecture coding agent tuned for prefix-cache
-          stability: fixed tool catalog, append-only history, rare compaction.
+          阿里云百炼平台的前缀缓存感知预设：工具目录固定、历史只追加、压缩尽量不触发。
+          适用于该路线上的全部模型（Qwen / DeepSeek / Kimi / GLM 等），
+          靠 harness 侧设计保前缀，不依赖端点的 in-history 能力。
         order: 10
         plugins:
           - id: persona
@@ -96,17 +101,21 @@
               - id: compaction-basic
                 name: '@deepseek-ai/dsh-compaction-basic'
                 config:
+                  # 顶层默认 —— 适用所有路由到 aliyun 的模型，不限于 Qwen。
+                  # thresholdRatio / retainRatio 都是比例，随窗口自适应，
+                  # 所以 Qwen / DeepSeek / Kimi / GLM 可以共用同一组默认值。
                   thresholdRatio: 0.92
                   retainRatio: 0.3
                   summarizationProvider: aliyun
                   summarizationModel: qwen3.8-flash
-                  modelPolicies:
-                    - provider: aliyun
-                      model: qwen3.8-flash
-                      thresholdRatio: 0.92
-                      retainRatio: 0.3
-                      summarizationProvider: aliyun
-                      summarizationModel: qwen3.8-flash
+                  # 按模型覆盖：只在某个模型确实需要不同参数时才加。
+                  # 比例本身与窗口无关，但保留尾部的绝对 token 量随窗口缩放 ——
+                  # 窗口小的老架构模型要把 retainRatio 调小，给中段留出可压缩空间。
+                  # 示例（老架构 Qwen3 系列），按需启用：
+                  #   - provider: aliyun
+                  #     model: qwen3-max
+                  #     retainRatio: 0.15
+                  modelPolicies: []
               - id: command-compact
                 name: '@deepseek-ai/dsh-command-compact'
               - id: tool-result-pruner

@@ -1,14 +1,15 @@
 {
-  "name": "dsh-qwen-harness",
+  "name": "dsh-bailian-gold",
   "version": "0.1.0",
   "type": "module",
-  "description": "Qwen Harness（阿里云百炼版）：为 Qwen3.8-Flash 量身定做的前缀缓存感知 Agent 预设",
+  "description": "百炼成金模式：阿里云百炼平台的前缀缓存感知 Agent 预设",
   "keywords": [
     "deepseek-harness",
     "dsh",
     "dsh-plugin",
     "agent-preset",
-    "qwen",
+    "bailian",
+    "model-studio",
     "prefix-cache"
   ],
   "license": "MIT",
@@ -20,12 +21,12 @@
     "LICENSE"
   ],
   "meta": {
-    "title": "Qwen Harness",
-    "description": "为 Qwen3.8-Flash 定做的前缀缓存感知预设：工具目录全程固定、历史只追加、压缩尽量不触发。一等指标是 prefix cache hit rate，不是 token 数。"
+    "title": "百炼成金模式",
+    "description": "阿里云百炼平台的前缀缓存感知预设：工具目录全程固定、历史只追加、压缩尽量不触发。一等指标是 prefix cache hit rate，不是 token 数。适用于该路线上的全部模型。"
   },
   "dsh": {
     "bundle": {
-      "patch": "./presets/qwen.patch.yml"
+      "patch": "./presets/bailian-gold.patch.yml"
     }
   }
 }

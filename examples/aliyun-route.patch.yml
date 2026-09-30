@@ -1,4 +1,4 @@
-# 阿里云百炼（DashScope）route 配置 —— 配套 presets/qwen.patch.yml
+# 阿里云百炼（DashScope）route 配置 —— 配套 presets/bailian-gold.patch.yml
 #
 # 这段属于 Host 级配置（profile 的 cordis.patch.yml），不是 preset 的一部分。
 # 二者分工：preset 定义 agent 行为（工具面 / 提示词 / 压缩策略），
@@ -28,11 +28,26 @@
         # https://llm-<实例 id>.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
         baseURL: https://dashscope.aliyuncs.com/compatible-mode/v1
         models:
+          # —— Qwen3.8 / Qwen4 架构（本 preset 的主目标）——
           - id: qwen3.8-flash
             name: qwen3.8-flash
             # 官方标准模式最大输入 991808（思考模式 983616）。
             # 这是「尽量不压缩」策略的前提。
             contextWindow: 991808
-            # 不设 maxTokens：留空则用 route 回退值 32768。
-            # 注意设了它会同时成为每请求的输出默认值，反而把 messageBudget 压低、
-            # 让压缩更早触发 —— 与本 preset 的目标相反。
+          # —— 老架构 Qwen3 系列 ——
+          # 比例参数与窗口无关，但窗口本身必须如实填写：填大了压缩迟迟不触发、
+          # 一路撞上限；填小了白白提高压缩频率。数字以百炼控制台为准，别照抄别家平台。
+          # - id: qwen3-max
+          #   name: qwen3-max
+          #   contextWindow: <控制台公布的窗口>
+          # —— 百炼托管的第三方模型 ——
+          # DeepSeek / Kimi / GLM / MiniMax 在同一个 route 下同理声明。
+          # 它们同样吃百炼的平台级隐式缓存，所以本 preset 的保前缀策略一并适用，
+          # 不需要另做 preset。
+          # - id: kimi-k3
+          # - id: glm-5.3
+          - id: deepseek-v4.1-flash
+            name: deepseek-v4.1-flash
+        # 不设 model 的 maxTokens：留空则用 route 回退值 32768。
+        # 注意设了它会同时成为每请求的输出默认值，反而把 messageBudget 压低、
+        # 让压缩更早触发 —— 与本 preset 的目标相反。

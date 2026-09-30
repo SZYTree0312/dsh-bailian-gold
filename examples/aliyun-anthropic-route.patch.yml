@@ -62,6 +62,6 @@
 # ——不由用户配置，只能由 pi-ai 内置 catalog 的 provider 声明。
 # 百炼是手申报路由，拿不到。
 #
-# 替代方案：把前缀稳定性交给 harness 侧。presets/qwen.patch.yml 的三条设计
+# 替代方案：把前缀稳定性交给 harness 侧。presets/bailian-gold.patch.yml 的三条设计
 # （工具目录固定 / 历史只追加 / 动态状态推尾部）本就是在保证系统提示不变，
 # 不需要端点配合。换句话说，这条原生机制我们是用设计绕过去的，不是补出来的。
