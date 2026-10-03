@@ -116,8 +116,8 @@ reason*），于是**既不发控制参数，也不在 harness 视野里**。实
 ```
 presets/bailian-gold.patch.yml            preset 定义，主产物（0.1.7+ / 0.2.x）
 compat/0.1.5/                             dsh 0.1.5-rc.x 的兼容版（旧 preset 机制）
-examples/aliyun-route.patch.yml           阿里云 route（OpenAI 兼容壳）
-examples/aliyun-anthropic-route.patch.yml 阿里云 route（Anthropic 端点，更接近原生）
+examples/aliyun-anthropic-route.patch.yml 阿里云 route（Anthropic 端点）★ 本预设配套，用它
+examples/aliyun-route.patch.yml           阿里云 route（OpenAI 兼容壳，备选）
 docs/spike-01-*.md                        前缀可否锁住的源码级验证
 docs/verify-prefix-cache.md               实测：缓存命中、显式 vs 隐式计费、思考开销
 docs/compare-whale-elite.md               与鲸英模式的逐项对比
@@ -185,36 +185,49 @@ pressureBudget = 229376 − 65536 = 163840
 **不要设 model 的 `maxTokens`**：它会同时成为每请求输出默认值，压低 `messageBudget`，
 让压缩更早触发，与本预设目标相反。
 
-### 协议层：两条路，以及一条补不了的
+### 协议层：两条路，本预设只走 Anthropic 端点
 
 百炼同时提供 OpenAI 兼容壳（`/compatible-mode/v1`）和 Anthropic 兼容端点
-（`/apps/anthropic`，`POST …/v1/messages`）。后者是更接近原生的那条：
+（`/apps/anthropic`，`POST …/v1/messages`）。**本预设只走后者**：
 
 | | OpenAI 壳 | Anthropic 端点 |
 |---|---|---|
 | 思考输出 | `reasoning_content` 字段（非标参数要被拦成 header 才能透传） | 原生 thinking 内容块 |
 | 工具调用 | OpenAI function call | 原生 `tool_use` / `tool_result` 块 |
-| 缓存 | 仅隐式 | 隐式 + **`cache_control: {type: ephemeral}` 显式断点** |
-| `systemPromptUpdate: in-history` | ✗ | ✗ |
-| `/v1/models` 发现 | ✓ | ✗（须手写 models）|
+| 缓存 | 仅隐式（命中 2 折 ¥0.16/M） | 隐式 + **`cache_control` 显式断点（命中 1 折 ¥0.08/M）** |
+| 尾部追加 system | — | **端点支持**（实测见下） |
+| `/v1/models` 发现 | ✓ | ✗（须手写 models） |
 
 配置见 `examples/aliyun-anthropic-route.patch.yml`。
 
-**`in-history` 补不了，两边都堵**：官方 DeepSeek 靠它保证"系统提示变更时追加而非
-重写开头"，是保前缀缓存的关键。但百炼 Anthropic 文档明确"**`system` 是顶层参数，
-`messages` 数组不接受 system 角色**"，端点语义就不支持；pi-ai 侧的
-`supportsMidConvoSystemMessages` / `supportsMidConvoToolAdditions` 两个能力位
-在 compat 表里是 `withhold`（只能由 pi-ai 内置 catalog 声明），手申报路由拿不到。
+**`in-history` 的真实情况（2026-10-04 实测更正）**
 
-**照搬 `llm-deepseek` 的默认 catalog 声明 `in-history`，打这个端点会让系统提示直接失效。**
+这里原先写「端点语义不支持、两边都堵」—— 那是照抄官方文档，没实测。拿真实 key
+打过去之后，两个实验都推翻了它：
 
-替代方案是把前缀稳定性交给 harness 侧——本 preset 的三条设计本就是在保证系统提示不变，
-不需要端点配合。这条原生机制是**用设计绕过去的，不是补出来的**。
+- **谁优先**：顶层 `system` 要求含 AAA、`messages` 内 `system` 要求含 BBB
+  → 回复同时含 AAA 和 BBB。**合并生效，不是覆盖** —— `messages` 数组接受 system 角色。
+- **保不保前缀**：固定前缀带 `cache_control`，连发 3 轮、每轮在尾部追加一条新 `system`：
+  `create=1802` → `read=1802` → `read=1802`。追加的 system 语义生效，
+  **而前缀缓存一次都没断**。
+
+也就是说：动态状态可以追加在历史尾部更新系统提示，不必重写开头那条消息 ——
+这正是 `in-history` 想要的效果，**端点层完全给得起**。
+
+真正堵的是中间层：pi-ai 的 `supportsMidConvoSystemMessages`（及
+`supportsMidConvoToolAdditions`）在 compat 表里是 `withhold`，只由内置 catalog
+声明，手申报路由拿不到，dsh 因此不会那样组织请求。
+
+**所以策略不变，但理由变了**：前缀稳定性依旧交给 harness 侧三条设计 ——
+不是端点给不起，而是中间层能力位没放开。若哪天该位放开，或改用自建 fork，
+尾部追加 system 这条路可以直接用起来，`includeRuntimeContext: false`
+那个全有全无的妥协也就不再必要。
 
 ## 安装
 
-前提：profile 里已有 `llm-pi-ai` 的 `aliyun` route（见 `examples/`，OpenAI 壳与
-Anthropic 端点两种方案按需选一）。
+前提：profile 里已有 `llm-pi-ai` 的 `aliyun` route。**用 Anthropic 端点那份**
+（`examples/aliyun-anthropic-route.patch.yml`，实测公共端点即可，不必专属实例）。
+OpenAI 壳那份（`examples/aliyun-route.patch.yml`）仅作为备选保留。
 
 ```bash
 dsh plugin --profile web add github:SZYTree0312/dsh-bailian-gold

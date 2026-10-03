@@ -36,16 +36,24 @@
         name: 百炼成金模式
         description: >-
           阿里云百炼平台的前缀缓存感知预设：工具目录固定、历史只追加、压缩尽量不触发。
-          适用于该路线上的全部模型（Qwen / DeepSeek / Kimi / GLM 等），
-          靠 harness 侧设计保前缀，不依赖端点的 in-history 能力。
+          适用于该路线上的全部模型（Qwen / DeepSeek / Kimi / GLM 等）。
+          前缀稳定性由 harness 侧设计保证：端点本身支持在尾部追加 system 且不断前缀
+          （实测见 examples/aliyun-anthropic-route.patch.yml），但 pi-ai 的相应能力位
+          不开放给手申报路由，因此本预设不依赖它。
         order: 10
         plugins:
           - id: persona
             name: '@deepseek-ai/dsh-persona'
             config:
               # 关闭动态 runtime-context 注入。它是「ordered dynamic runtime context」，
-              # 落进系统提示；而百炼没有 systemPromptUpdate: in-history 兜底，
-              # 系统提示一旦变化就会重写开头那条消息，整段前缀缓存随之失效。
+              # 落进系统提示；系统提示一旦变化就会重写开头那条消息，整段前缀缓存随之失效。
+              #
+              # ⭐ 2026-10-04 实测更正：这里的理由**不是**「端点不支持」。
+              #   百炼 anthropic 端点实测支持在历史尾部追加 system，且前缀缓存不断
+              #   （create=1802 后连续两轮 read=1802，追加的 system 语义生效）。
+              #   真正的堵点在 pi-ai：supportsMidConvoSystemMessages 是 withhold 位，
+              #   只由内置 catalog 声明，手申报路由拿不到，dsh 便不会那样组织请求。
+              #   该能力位放开前（或改用自己的 fork 前），只能继续关掉这里。
               # 代价：该开关是全有或全无，会一并抑制 sandbox / approval / delegation
               # 的策略提示（没有按提供方过滤的选项）。缓存安全优先 —— 8 倍价差
               # 远大于少几条策略提示的损失，且沙箱本身仍由 harness 强制执行。

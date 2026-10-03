@@ -1,5 +1,11 @@
 # 阿里云百炼（DashScope）route 配置 —— 配套 presets/bailian-gold.patch.yml
 #
+# ⚠️ 本文件是**备选**。百炼成金 preset 配套的是 Anthropic 端点那条路：
+#    examples/aliyun-anthropic-route.patch.yml
+#    走它才能拿到 cache_control 显式缓存断点（命中按 1 折 ¥0.08/M 计费，
+#    而本文件的 OpenAI 壳只有隐式缓存、命中 2 折 ¥0.16/M）。
+#    仅当你确实需要兼容模式独有的模型时才用这份。
+#
 # 这段属于 Host 级配置（profile 的 cordis.patch.yml），不是 preset 的一部分。
 # 二者分工：preset 定义 agent 行为（工具面 / 提示词 / 压缩策略），
 # 这里定义模型容量。压缩的实际触发点由两者共同决定。

@@ -39,7 +39,21 @@
 #
 # 注意：连官方 DeepSeek adapter（packages/llm/llm-deepseek）都没有发 cache_control，
 # 全库 grep 为空。它靠的是隐式前缀缓存 + in-history 保前缀。这里反过来——
-# 显式断点由我们主动标，但 in-history 拿不到（见下）。
+# 显式断点由我们主动标，且 in-history **端点层也拿得到**（见文末实测，旧结论已更正）。
+#
+# ── 2026-10-04 端到端实测（公共端点 + qwen3.8-flash，真实 key）──────────────
+#   ✅ 简单对话          —— 200，语义正常
+#   ✅ 显式缓存          —— 前缀带 cache_control：轮1 create=3192 → 轮2/3 read=3192
+#                          （历史从 19→50→73 token 递增，前缀照样命中）
+#   ✅ 工具调用往返      —— 轮1 stop_reason=tool_use 返回规范的 tool_use 块；
+#                          回传 tool_result 后轮2 end_turn，模型正确使用了结果
+#   ✅ 多轮工具循环      —— 轮3 再次 tool_use，稳定
+#   ✅ 思考块重放        —— 百炼返回的 thinking 块 signature 为空字符串 ""，
+#                          原样重放进历史，后续轮次全部 200，端点不校验它
+#   ✅ 关思考            —— thinking: {type:"disabled"} 生效
+#   ✅ 公共端点即可      —— 不需要专属实例域名（缓存池跨端点共享）
+#   ⚠️ 端点该给的都是给的；剩下的限制在 pi-ai 层（能力位 withhold），见文末。
+# ─────────────────────────────────────────────────────────────────────────
 
 - id: llm-pi-ai
   name: "@deepseek-ai/dsh-llm-pi-ai"
@@ -51,12 +65,37 @@
         # anthropic-messages 是 pi-ai 支持的三种协议之一
         api: anthropic-messages
         # 必须以 /apps/anthropic 结尾，不要带 /v1 ——客户端会自己拼 /v1/messages。
-        # {WorkspaceId} 换成控制台 Workspace Details 里的 id；
-        # 专属实例形态可直接用 llm-<实例 id>.cn-beijing.maas.aliyuncs.com/apps/anthropic
-        baseURL: https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/apps/anthropic
+        #
+        # ⭐ 2026-10-04 实测更正：这里**不需要**专属实例，公共端点直接可用。
+        #   之前写 `{WorkspaceId}.cn-beijing.maas.aliyuncs.com` 是照抄官方文档的
+        #   推荐形态，但实测表明 `dashscope.aliyuncs.com/apps/anthropic` 同样返回 200、
+        #   显式缓存照常创建与命中（且缓存池跨端点共享：专属建的缓存，公共能读到）。
+        #   官方推荐专属域名是为了性能与稳定性（独立配额/限流），不是能力门槛。
+        #   所以默认写公共端点；撞 QPS 时再换成
+        #   https://llm-<实例 id>.cn-beijing.maas.aliyuncs.com/apps/anthropic
+        baseURL: https://dashscope.aliyuncs.com/apps/anthropic
         compat:
-          # 唯一合法取值就是 anthropic；pi-ai 的取值表被 drift gate 锁死，写别的会编译期失败
-          cacheControlFormat: anthropic
+          # ⚠️ 2026-10-04 实测更正：这里原先写 `cacheControlFormat: anthropic` 是**错的**。
+          #
+          #   `cacheControlFormat` 属于 `OpenAICompletionsCompat`，只归 `openai-completions`
+          #   协议所有。而 pi-ai 的规则是「字段只属于声明它的那个协议」：
+          #     模型级不匹配的字段 → fails resolution；
+          #     route 级不匹配的字段 → **skips past models it cannot fit**
+          #     （静默跳过，不报错，也完全不生效）。
+          #   所以配了等于没配，还让人误以为显式缓存是它打开的。
+          #
+          #   anthropic-messages 原生就会发 `cache_control`，**不需要**这个开关。
+          #
+          # anthropic-messages 真正可用的缓存相关位（见 catalog.d.ts）：
+          supportsCacheControlOnTools: true
+          #   在工具定义上也打 cache_control。实测端点接受（HTTP 200 不报错），
+          #   但本次测试的工具目录太短、create=0 —— 实际是否产生缓存取决于
+          #   工具目录总长度是否够到百炼的最小可缓存长度。agent 场景工具多，
+          #   开着不亏；想确认收益就去看 usage.cache_creation_input_tokens。
+          #
+          # supportsLongCacheRetention: true   ← **不要开**。
+          #   百炼给的是 ephemeral_5m（响应里 cache_creation.ephemeral_5m_input_tokens），
+          #   只有 5 分钟，没有长保留档。
         # 手写 models：该端点不提供 /v1/models，自动发现会 404。
         # 模型 id 必须用百炼的写法（deepseek-v4-flash / deepseek-v4.1-flash / qwen3.8-flash …）
         models:
@@ -77,30 +116,52 @@
             # compat:
             #   thinkingFormat: qwen # 取值须在 pi-ai 的 THINKING_FORMAT_GATE 内
             #
-            # ⚠️ 上面这段**未验证**：thinkingFormat → wire 参数的映射在 pi-ai 库内部，
-            # 本仓库没有实机跑过。写错可能让每次请求都失败，先拿小请求试。
-            # 另外关掉思考省的是输出 token，但 agent 少了推理容易多绕几轮
+            # ⭐ 2026-10-04 补测：**端点层**已验证 —— 发 `thinking: {type: "disabled"}`
+            #   能关掉思考（回复变简洁、不再有 thinking 块），思考确为可控项。
+            #
+            #   ⚠️ 仍未验证的是**dsh 配置层**：`reasoningEfforts` → wire 参数的映射
+            #   在 pi-ai 库内部，本仓库没有实机跑过 dsh。写错可能让每次请求都失败，
+            #   先拿小请求试。
+            #
+            # 另外：思考块回流时 `signature` 是**空字符串**（百炼给的就是 ""）。
+            #   实测把这个空 signature 的 thinking 块原样重放进历史，
+            #   后续轮次（含再次 tool_use）全部 200 —— 端点不校验它。
+            #   但 pi-ai 侧有 `allowEmptySignature` 位：不开的话它可能把 thinking
+            #   转成 `<thinking>` 文本再重放，字节形态就变了。想保持前缀字节稳定，
+            #   建议开 `allowEmptySignature: true`（dsh 侧行为未实测）。
+            #
+            # 关掉思考省的是输出 token，但 agent 少了推理容易多绕几轮
             # （每轮都付新内容全价）—— 是取舍，不是纯赚。
           - id: deepseek-v4.1-flash
             name: deepseek-v4.1-flash
 
-# ⚠️ 这个端点上拿不到的：systemPromptUpdate: in-history
+# ⭐ 2026-10-04 实测更正：in-history 这条机制**在端点上通**。
 #
-# 官方 DeepSeek 的原生体验里，最要紧的一条是 deepseek-flash 默认声明的
-# systemPromptUpdate: in-history ——「端点读取 messages 任意位置的最新 system 消息
-# 作为完整系统提示」，于是 agent loop 可以把变更的系统提示追加在缓存历史之后，
-# 而不是重写开头。这是保前缀缓存的关键。
+# 之前这里写「百炼 Anthropic 文档明确写着 system 是顶层参数、messages 数组
+# 不接受 system 角色，所以 in-history 拿不到」—— 那是照抄文档，没实测。
+# 实际拿真实 key 打过去，两个实验都推翻了它：
 #
-# 百炼的 Anthropic 文档明确写着：
-#   「system 是顶层参数 —— messages 数组不接受 system 角色。」
-# 也就是说对话中间的 system 消息这条路在端点上就不通，声明 in-history 只会让
-# 系统提示彻底失效。**千万不要**照搬 llm-deepseek 的 catalog 或其默认声明。
+#   实验A（谁优先）：顶层 system 要求含 AAA、messages 内 system 要求含 BBB
+#     → 回复「这句话包含了标记 AAA 和 BBB」。不是覆盖，是**合并生效**。
+#      messages 数组里的 system 角色被接受，且语义真的起作用。
+#   实验B（保不保前缀）：固定长前缀带 cache_control，连续三轮，
+#     每轮在**尾部**追加一条新 system（CCC2 / CCC3）再接新的 user：
+#       轮1 create=1802 read=0
+#       轮2 create=0   read=1802   回复含 CCC2 ✅
+#       轮3 create=0   read=1802   回复含 CCC3 ✅
+#     → 追加的 system 生效，而**前缀缓存一次没断**。
 #
-# pi-ai 侧也堵着：它内部有 supportsMidConvoSystemMessages /
-# supportsMidConvoToolAdditions 两个能力位，但在 compat 表里都是 'withhold'
-# ——不由用户配置，只能由 pi-ai 内置 catalog 的 provider 声明。
-# 百炼是手申报路由，拿不到。
+# 也就是说：动态状态可以追加在历史尾部更新系统提示，不必重写开头那条消息。
+# 这正是 in-history 想要的效果，端点层面完全给得起。
 #
-# 替代方案：把前缀稳定性交给 harness 侧。presets/bailian-gold.patch.yml 的三条设计
-# （工具目录固定 / 历史只追加 / 动态状态推尾部）本就是在保证系统提示不变，
-# 不需要端点配合。换句话说，这条原生机制我们是用设计绕过去的，不是补出来的。
+# ⚠️ 但还有第二道关：pi-ai 层。它内部有 supportsMidConvoSystemMessages /
+# supportsMidConvoToolAdditions 两个能力位，在 compat 表里是 'withhold'
+# —— 不由用户配置，只能由 pi-ai 内置 catalog 的 provider 声明。
+# 百炼是手申报路由，拿不到。上面两个实验是**直接发 HTTP** 验证的端点能力，
+# 不代表 dsh 一定会这样组织请求。
+#
+# 所以当前策略（仍然成立，但理由变了）：把前缀稳定性交给 harness 侧 ——
+# presets/bailian-gold.patch.yml 的三条设计（工具目录固定 / 历史只追加 /
+# 动态状态推尾部）依旧是主力。不是因为端点不支持（支持），而是因为 pi-ai
+# 的能力位不给配。若哪天这一位放开，或改用自己的 fork，尾部追加 system
+# 这条路可以直接用起来，不必再靠 includeRuntimeContext: false 做全有全无的妥协。
