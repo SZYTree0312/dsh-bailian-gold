@@ -142,12 +142,23 @@ preset 也从「一个独立文件」变成「一行插件声明」。
 
 ## 接入
 
-完整可用需要两部分，分工不同：
+**本 preset 自带两部分，装完即完整**，不必再手动叠加 `examples/` 里的 route：
 
-| 部分 | 层级 | 管什么 |
+| 段 | 层级 | 管什么 |
 |---|---|---|
-| `presets/bailian-gold.patch.yml` | Agent（preset） | 工具面、提示词、压缩策略 |
-| `examples/aliyun-route.patch.yml` | Host（profile patch） | 模型路由与容量 |
+| `insert` · `preset-bailian-gold` | Agent（preset） | 工具面、提示词、压缩策略 |
+| `override` · `llm-pi-ai` | Host（profile patch） | 模型路由：固定走 Anthropic 端点 |
+
+第二段是 **id-targeted override**：base 的 core bundle 里已经有 `llm-pi-ai`
+（默认带的是 OpenAI 兼容壳），这里按 id 把它覆盖成
+`api: anthropic-messages` + `/apps/anthropic`，并把 `contextWindow: 991808` 写好。
+
+> cordis 规则：`insert` 只用于新增，顶层 `- id:` + `config:` 用于按 id 覆盖，
+> 且**覆盖会替换整个 config**。这也是为什么那段里把 route 拥有的每个键都重述了一遍。
+
+想改回或微调（换专属实例域名、增删模型、改 compat）：在你自己的 profile
+`cordis.patch.yml` 或 `--patch` overlay 里再覆盖一次即可 ——
+那些层在本 preset **之后**应用，盖得回来。
 
 ### route 名必须对齐
 
@@ -255,7 +266,7 @@ dsh plugin --profile web remove dsh-bailian-gold
       且其取值等于上游默认（见 `docs/compare-whale-elite.md`）
 - [x] **实测：前缀缓存可命中**（隐式 98.5% / 显式 99.9%），
       并算出隐式→显式的成本转折点在第 4 轮（见 `docs/verify-prefix-cache.md`）
-- [ ] 把 `examples/` 的 route（尤其 `contextWindow`）真正落到 profile —— **不填等于放弃主要收益**
+- [x] route 已内置进 preset（`llm-pi-ai` override 段，含 `contextWindow: 991808`），装完即生效
 - [ ] 实机验证：装进 profile 跑一次完整会话，确认 preset 加载与压缩触发点
 - [ ] 思考开销的控制（`reasoningEfforts` + `compat.thinkingFormat`）—— 写法未验证
 - [ ] `bootstrapMaxTokens` 落点（已定位到 `llm-pi-ai`，具体参数待确认）

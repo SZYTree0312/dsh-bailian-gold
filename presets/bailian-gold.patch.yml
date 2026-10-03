@@ -234,3 +234,52 @@
           - id: tool-plugin-manager
             name: '@deepseek-ai/dsh-plugin-manager/tools'
             disabled: true
+
+# ── 模型路由：本预设只走 Anthropic 端点 ─────────────────────────────────────
+#
+# ⚠️ 这是 **id-targeted override**，不是 insert —— 两者不能混用：
+#
+#   cordis patch 的规则（见 dsh-web-app 的 cordis.patch.yml 开头注释，实测核对）：
+#     · `insert: [ ... ]` 只用于**新增**条目；
+#     · 顶层 `- id: xxx` + `config:` 按 id **覆盖** base 里已有的同名插件；
+#     · 且**覆盖会替换整个 config**，所以下面必须重述这条 route 拥有的每个键。
+#
+#   base 的 core bundle 里已经有 `llm-pi-ai`（它带的是 OpenAI 兼容壳），
+#   所以这里要用 override 把它换成 Anthropic 端点。若误用 `insert` 塞同名 id，
+#   语义未定义 —— 可能起两个同名插件、也可能整段替换，结果是装完 dsh 起不来。
+#
+#   副作用要知晓：base 或你自己的 profile 里给 `llm-pi-ai` 配过**其他** provider 的，
+#   被这条覆盖后会丢失，需要一并重述到下面的 `providers` 里。
+#   好在你的 profile cordis.patch.yml 与 `--patch` overlay 在本层**之后**应用，
+#   所以你自己的配置仍然可以盖回这里。
+#
+# 为什么是 Anthropic 端点：显式 `cache_control` 命中 1 折（¥0.08/M），
+# 而 OpenAI 兼容壳只有隐式缓存、命中 2 折（¥0.16/M）。
+# 完整实测（工具调用 / 多轮 / 思考块重放 / 公共端点可用性）见
+# `examples/aliyun-anthropic-route.patch.yml` 顶部摘要。
+- id: llm-pi-ai
+  config:
+    providers:
+      aliyun:
+        displayName: 阿里云百炼
+        apiKeyEnv: ALIYUN_API_KEY
+        # anthropic-messages 是 pi-ai 支持的三种协议之一
+        api: anthropic-messages
+        # 必须以 /apps/anthropic 结尾，不要带 /v1 —— 客户端会自己拼 /v1/messages。
+        # 2026-10-04 实测：公共端点即可，不需要专属实例域名。
+        # 撞 QPS 时再换成 https://llm-<实例 id>.cn-beijing.maas.aliyuncs.com/apps/anthropic
+        baseURL: https://dashscope.aliyuncs.com/apps/anthropic
+        compat:
+          # 工具定义上也打 cache_control（实测端点接受）。
+          # 注意 `cacheControlFormat` 只归 openai-completions，配在这里是静默失效。
+          # `supportsLongCacheRetention` 不要开：百炼给的是 ephemeral_5m，只有 5 分钟。
+          supportsCacheControlOnTools: true
+        # 该端点不提供 /v1/models（实测 404），模型必须手写。
+        models:
+          - id: qwen3.8-flash
+            name: qwen3.8-flash
+            # ⚠️ 不能省：省掉就回落 262144，压缩触发点从 ~893504 掉到 163840，
+            #    常规会话够得着，本预设的保前缀设计随之失效。
+            contextWindow: 991808
+          - id: deepseek-v4.1-flash
+            name: deepseek-v4.1-flash
