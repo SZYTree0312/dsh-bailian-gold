@@ -1,3 +1,7 @@
+# ⚠️ DEPRECATED（2026-10-26）：公共 /apps/anthropic 已改为 Claude 网关（不再服务 Qwen），
+#    workspace 域名实测连不通、也无模型。百炼成金 preset 现已改用 OpenAI 兼容壳，
+#    见 examples/aliyun-route.patch.yml（也是 preset 内联的那份）。本文件仅留作历史参考。
+#
 # 阿里云百炼 · Anthropic 兼容端点方案
 #
 # 现状（examples/aliyun-route.patch.yml）走的是百炼的 OpenAI 兼容壳：
@@ -66,14 +70,12 @@
         api: anthropic-messages
         # 必须以 /apps/anthropic 结尾，不要带 /v1 ——客户端会自己拼 /v1/messages。
         #
-        # ⭐ 2026-10-04 实测更正：这里**不需要**专属实例，公共端点直接可用。
-        #   之前写 `{WorkspaceId}.cn-beijing.maas.aliyuncs.com` 是照抄官方文档的
-        #   推荐形态，但实测表明 `dashscope.aliyuncs.com/apps/anthropic` 同样返回 200、
-        #   显式缓存照常创建与命中（且缓存池跨端点共享：专属建的缓存，公共能读到）。
-        #   官方推荐专属域名是为了性能与稳定性（独立配额/限流），不是能力门槛。
-        #   所以默认写公共端点；撞 QPS 时再换成
-        #   https://llm-<实例 id>.cn-beijing.maas.aliyuncs.com/apps/anthropic
-        baseURL: https://dashscope.aliyuncs.com/apps/anthropic
+        # ⭐ 2026-10-26 修正：公共端点 `dashscope.aliyuncs.com/apps/anthropic` 已被阿里云
+        #   改为 Claude 网关（需 Claude / Tonken / Coding 套餐 key，不再服务 Qwen），
+        #   用百炼通用 key 打过去会被拒。百炼的上下文缓存是付费「业务空间」特性，
+        #   必须走 workspace 域名才有缓存。下方用树的实际业务空间域名；
+        #   不在北京地域把 cn-beijing 换成对应 region 即可。
+        baseURL: https://llm-xaxsovymhpyl50jm.cn-beijing.maas.aliyuncs.com/apps/anthropic
         compat:
           # ⚠️ 2026-10-04 实测更正：这里原先写 `cacheControlFormat: anthropic` 是**错的**。
           #

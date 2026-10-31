@@ -1,6 +1,6 @@
 {
   "name": "dsh-bailian-gold",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "百炼成金模式：阿里云百炼平台的前缀缓存感知 Agent 预设",
   "keywords": [
@@ -13,6 +13,9 @@
     "prefix-cache"
   ],
   "license": "MIT",
+  "engines": {
+    "dsh": ">=0.2.0-rc.2"
+  },
   "files": [
     "presets",
     "examples",

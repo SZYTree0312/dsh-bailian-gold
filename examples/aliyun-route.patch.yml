@@ -1,10 +1,12 @@
 # 阿里云百炼（DashScope）route 配置 —— 配套 presets/bailian-gold.patch.yml
 #
-# ⚠️ 本文件是**备选**。百炼成金 preset 配套的是 Anthropic 端点那条路：
-#    examples/aliyun-anthropic-route.patch.yml
-#    走它才能拿到 cache_control 显式缓存断点（命中按 1 折 ¥0.08/M 计费，
-#    而本文件的 OpenAI 壳只有隐式缓存、命中 2 折 ¥0.16/M）。
-#    仅当你确实需要兼容模式独有的模型时才用这份。
+# 阿里云百炼 route 配置 —— 与 presets/bailian-gold.patch.yml 内联的那份**完全一致**
+# （preset 已内联同一份，这里留作对照参考）。这段属于 Host 级配置
+# （profile 的 cordis.patch.yml），不是 preset 的一部分。
+#
+# 显式缓存（另辟蹊径）：compat.cacheControlFormat=anthropic 让 pi-ai 在系统提示 /
+# 工具 / 末轮打 Anthropic 风格 cache_control 断点，百炼 /compatible-mode/v1 认这种
+# 格式，前缀走「显式 1 折 ¥0.08/M」—— 不再只是隐式 2 折。
 #
 # 这段属于 Host 级配置（profile 的 cordis.patch.yml），不是 preset 的一部分。
 # 二者分工：preset 定义 agent 行为（工具面 / 提示词 / 压缩策略），
@@ -33,6 +35,10 @@
         # 通用端口。若走阿里云专属 MaaS 实例，替换成
         # https://llm-<实例 id>.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
         baseURL: https://dashscope.aliyuncs.com/compatible-mode/v1
+        # 显式前缀缓存（另辟蹊径）：cacheControlFormat=anthropic 让 pi-ai 在前缀打
+        # Anthropic 风格 cache_control 断点，百炼 /compatible-mode/v1 认这种格式 → 1 折。
+        compat:
+          cacheControlFormat: anthropic
         models:
           # —— Qwen3.8 / Qwen4 架构（本 preset 的主目标）——
           - id: qwen3.8-flash

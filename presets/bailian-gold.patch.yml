@@ -37,9 +37,11 @@
         description: >-
           阿里云百炼平台的前缀缓存感知预设：工具目录固定、历史只追加、压缩尽量不触发。
           适用于该路线上的全部模型（Qwen / DeepSeek / Kimi / GLM 等）。
-          前缀稳定性由 harness 侧设计保证：端点本身支持在尾部追加 system 且不断前缀
-          （实测见 examples/aliyun-anthropic-route.patch.yml），但 pi-ai 的相应能力位
-          不开放给手申报路由，因此本预设不依赖它。
+          前缀稳定性由 harness 侧设计保证（工具目录固定 / 历史只追加 / 压缩尽量不触发），
+          不依赖端点的 in-history 能力——百炼 OpenAI 兼容壳本就不支持尾部追加 system，
+          但显式缓存断点由 compat.cacheControlFormat=anthropic 在系统提示 / 工具 / 末轮
+          打 cache_control 实现，百炼认这种格式 → 前缀走「显式 1 折」；harness 侧三条
+          设计（工具目录固定 / 历史只追加 / 压缩尽量不触发）保证这段前缀字节稳定。
         order: 10
         plugins:
           - id: persona
@@ -69,8 +71,16 @@
                 - 会产生长输出的命令改为重定向到文件或后台作业，只读回需要的行。
                 - 最终答复只给结论、改动位置与验证结果，不粘贴大段代码。
                 事实靠检查获得，不要问用户；只有用户才能决定的选择才用 ask_user_question。
+              # ⚠️ 这里只允许 provider / model 两个变量：dsh 0.2.1-rc.3 的 agent-loop
+              #   只注册了这两个（ctx.systemPrompt.variable("provider" / "model")），
+              #   0.2.0-rc.2 里的 {{cwd}} 已被移除。提示词模板在**渲染时**严格解析，
+              #   写 {{cwd}} 会在第一轮组装系统提示时直接抛
+              #   unknown prompt variable "{{cwd}}" in section "deployment:persona-suffix"，
+              #   turn 在发出任何模型请求之前就结束（表现为「连不上模型」，实际是零请求）。
+              #   工作目录改由终端确认，不再进系统提示——这也与本 preset
+              #   includeRuntimeContext: false 的取舍一致：前缀只放字节稳定的静态文本。
               suffix: |-
-                你是由 {{model}} 驱动的编码 agent。工作目录：{{cwd}}。
+                你是由 {{model}} 驱动的编码 agent。工作目录以终端当前目录为准，需要时先执行 Get-Location（Windows）或 pwd 确认。
           - id: agent-instructions
             name: '@deepseek-ai/dsh-agent-instructions'
             config:
@@ -235,7 +245,7 @@
             name: '@deepseek-ai/dsh-plugin-manager/tools'
             disabled: true
 
-# ── 模型路由：本预设只走 Anthropic 端点 ─────────────────────────────────────
+# ── 模型路由：本预设只走百炼的 OpenAI 兼容壳 ─────────────────────────────────────
 #
 # ⚠️ 这是 **id-targeted override**，不是 insert —— 两者不能混用：
 #
@@ -244,8 +254,8 @@
 #     · 顶层 `- id: xxx` + `config:` 按 id **覆盖** base 里已有的同名插件；
 #     · 且**覆盖会替换整个 config**，所以下面必须重述这条 route 拥有的每个键。
 #
-#   base 的 core bundle 里已经有 `llm-pi-ai`（它带的是 OpenAI 兼容壳），
-#   所以这里要用 override 把它换成 Anthropic 端点。若误用 `insert` 塞同名 id，
+#   base 的 core bundle 里已经有 `llm-pi-ai`（默认带的是官方 DeepSeek 的 OpenAI 壳），
+#   这里用 override 把 `aliyun` route 指到百炼的 `/compatible-mode/v1`。若误用 `insert` 塞同名 id，
 #   语义未定义 —— 可能起两个同名插件、也可能整段替换，结果是装完 dsh 起不来。
 #
 #   副作用要知晓：base 或你自己的 profile 里给 `llm-pi-ai` 配过**其他** provider 的，
@@ -253,28 +263,35 @@
 #   好在你的 profile cordis.patch.yml 与 `--patch` overlay 在本层**之后**应用，
 #   所以你自己的配置仍然可以盖回这里。
 #
-# 为什么是 Anthropic 端点：显式 `cache_control` 命中 1 折（¥0.08/M），
-# 而 OpenAI 兼容壳只有隐式缓存、命中 2 折（¥0.16/M）。
-# 完整实测（工具调用 / 多轮 / 思考块重放 / 公共端点可用性）见
-# `examples/aliyun-anthropic-route.patch.yml` 顶部摘要。
+# 为什么走 OpenAI 兼容壳，并在壳上开显式缓存（2026-10-26 修正 + 另辟蹊径）：
+#   原计划走 Anthropic 端点拿显式 cache_control（命中 1 折 ¥0.08/M）。但阿里云已于
+#   2026-10 把公共 `dashscope.aliyuncs.com/apps/anthropic` 改成 Claude 网关
+#   （需 Claude / Tonken / Coding 套餐 key，不再服务 Qwen），workspace 域名也连不通。
+#   退而走 OpenAI 兼容壳用现有 ALIYUN_API_KEY 直接可用；本以为壳只给「隐式 2 折」，
+#   实则百炼 `/compatible-mode/v1` 同样认 cache_control 断点 —— 于是另辟蹊径：
+#   在 openai-completions 上挂 compat.cacheControlFormat=anthropic，pi-ai 便在前缀
+#   （系统提示 / 工具 / 末轮）打 cache_control，命中仍是「显式 1 折 ¥0.08/M」，
+#   与 Anthropic 端点殊途同归。保前缀设计（工具目录固定 / 历史只追加 / 压缩尽量不触发）
+#   正是为这 1 折服务；未命中回落全价，与隐式缓存互不冲突。
 - id: llm-pi-ai
   config:
     providers:
       aliyun:
         displayName: 阿里云百炼
         apiKeyEnv: ALIYUN_API_KEY
-        # anthropic-messages 是 pi-ai 支持的三种协议之一
-        api: anthropic-messages
-        # 必须以 /apps/anthropic 结尾，不要带 /v1 —— 客户端会自己拼 /v1/messages。
-        # 2026-10-04 实测：公共端点即可，不需要专属实例域名。
-        # 撞 QPS 时再换成 https://llm-<实例 id>.cn-beijing.maas.aliyuncs.com/apps/anthropic
-        baseURL: https://dashscope.aliyuncs.com/apps/anthropic
+        # openai-completions 是 pi-ai 的 OpenAI 兼容协议
+        api: openai-completions
+        # 百炼 OpenAI 兼容通用端点；用现有 ALIYUN_API_KEY，无需 workspace。
+        # 走专属 MaaS 实例时替换成
+        # https://llm-<实例 id>.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
+        baseURL: https://dashscope.aliyuncs.com/compatible-mode/v1
+        # 显式前缀缓存（另辟蹊径）：compat.cacheControlFormat=anthropic 让 pi-ai 在
+        # 系统提示、最后一条工具定义、最后一轮对话上打 Anthropic 风格 cache_control 断点；
+        # 百炼 /compatible-mode/v1 认这种格式，前缀走「显式 1 折 ¥0.08/M」而非仅隐式 2 折。
+        # 不设 cacheRetention → 默认 ephemeral（5 分钟 TTL），与百炼一致。
         compat:
-          # 工具定义上也打 cache_control（实测端点接受）。
-          # 注意 `cacheControlFormat` 只归 openai-completions，配在这里是静默失效。
-          # `supportsLongCacheRetention` 不要开：百炼给的是 ephemeral_5m，只有 5 分钟。
-          supportsCacheControlOnTools: true
-        # 该端点不提供 /v1/models（实测 404），模型必须手写。
+          cacheControlFormat: anthropic
+        # 百炼 OpenAI 壳不提供 /v1/models（实测 404），模型必须手写。
         models:
           - id: qwen3.8-flash
             name: qwen3.8-flash

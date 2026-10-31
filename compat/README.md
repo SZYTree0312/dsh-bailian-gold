@@ -6,7 +6,7 @@
 
 | dsh 版本 | preset 机制 | 用哪个 |
 |---|---|---|
-| **0.1.7-rc.1 及以后**（含 0.2.0-rc.x） | `@deepseek-ai/dsh-agent-preset` 插件行，经 profile patch 装入 | `presets/bailian-gold.patch.yml` |
+| **0.1.7-rc.1 及以后**（含 0.2.1-rc.x） | `@deepseek-ai/dsh-agent-preset` 插件行，经 profile patch 装入 | `presets/bailian-gold.patch.yml` |
 | **0.1.5-rc.1 ~ rc.3** | `@deepseek-ai/dsh-agent-presets`（**复数**）扫描 `<dshHome>/.agent-presets/` | `compat/0.1.5/` |
 
 从 0.1.7-rc.1 起，上游把 preset 拆成 `agent-preset-registry` + `agent-preset` 两个包，
@@ -15,7 +15,7 @@ preset 也从"一个独立文件"变成"一行插件声明"。0.1.5 之前是另
 ## 0.1.7+ 怎么装
 
 ```bash
-dsh plugin --profile web add github:SZYTree0312/dsh-bailian-gold
+dsh plugin --profile desktop add github:SZYTree0312/dsh-bailian-gold
 ```
 
 ## 0.1.5 怎么装
